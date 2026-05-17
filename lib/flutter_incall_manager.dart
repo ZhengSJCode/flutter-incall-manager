@@ -37,8 +37,6 @@ class InCallManager {
     'busytone': {'_BUNDLE_': null, '_DEFAULT_': null},
   };
 
-  bool _vibrate = false;
-
   /// Stream of proximity sensor events.
   Stream<InCallManagerEvents> get proximityStream {
     return EventChannel('${channelName}_proximity')
@@ -197,15 +195,12 @@ class InCallManager {
     String iosCategory = 'default',
     int seconds = -1,
   }) async {
-    _vibrate = vibratePattern != null;
     await _channel.invokeMethod('startRingtone', {
       'ringtoneUriType': ringtoneUriType,
       'iosCategory': iosCategory,
       'seconds': seconds,
+      if (vibratePattern != null) 'vibratePattern': vibratePattern,
     });
-    if (_vibrate && vibratePattern != null) {
-      HapticFeedback.heavyImpact();
-    }
   }
 
   /// Stop the currently playing ringtone.

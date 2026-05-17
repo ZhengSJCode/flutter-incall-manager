@@ -32,6 +32,14 @@ project.xcworkspace
 .gradle
 local.properties
 
+# Flutter/Dart
+#
+.dart_tool/
+pubspec.lock
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+
 # node.js
 #
 node_modules/

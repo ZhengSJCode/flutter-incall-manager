@@ -1,7 +1,7 @@
 name: flutter_incall_manager
 description: Flutter plugin for handling media routes, sensors, and events during audio/video calls.
 version: 4.2.1
-homepage: https://github.com/react-native-webrtc/react-native-incall-manager
+homepage: https://github.com/ZhengSJCode/flutter-incall-manager
 
 environment:
   sdk: '>=3.0.0 <4.0.0'

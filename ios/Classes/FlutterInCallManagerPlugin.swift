@@ -91,10 +91,10 @@ public class FlutterInCallManagerPlugin: NSObject, FlutterPlugin, AVAudioPlayerD
         case "stop":
             handleStop(call, result: result)
         case "turnScreenOn":
-            NSLog("RNInCallManager.turnScreenOn(): ios doesn't support turnScreenOn()")
+            NSLog("FlutterInCallManager.turnScreenOn(): ios doesn't support turnScreenOn()")
             result(nil)
         case "turnScreenOff":
-            NSLog("RNInCallManager.turnScreenOff(): ios doesn't support turnScreenOff()")
+            NSLog("FlutterInCallManager.turnScreenOff(): ios doesn't support turnScreenOff()")
             result(nil)
         case "setFlashOn":
             handleSetFlashOn(call, result: result)
@@ -105,7 +105,7 @@ public class FlutterInCallManagerPlugin: NSObject, FlutterPlugin, AVAudioPlayerD
         case "setForceSpeakerphoneOn":
             handleSetForceSpeakerphoneOn(call, result: result)
         case "setMicrophoneMute":
-            NSLog("RNInCallManager.setMicrophoneMute(): ios doesn't support setMicrophoneMute()")
+            NSLog("FlutterInCallManager.setMicrophoneMute(): ios doesn't support setMicrophoneMute()")
             result(nil)
         case "startRingtone":
             handleStartRingtone(call, result: result)
@@ -191,17 +191,21 @@ public class FlutterInCallManagerPlugin: NSObject, FlutterPlugin, AVAudioPlayerD
             return
         }
 
+        stopInCallManager()
+        result(nil)
+    }
+
+    private func stopInCallManager() {
         NSLog("FlutterInCallManager.stop(): stop InCallManager")
         restoreOriginalAudioSetup()
         stopBusytone()
         handleStopProximitySensor(result: { _ in })
         audioSessionSetActive(false, options: .notifyOthersOnDeactivation, caller: #function)
-        handleSetKeepScreenOn(FlutterMethodCall(methodName: "setKeepScreenOn", arguments: ["enable": false]), result: { _ in })
+        setKeepScreenOnInternal(false)
         stopAudioSessionNotification()
         NotificationCenter.default.removeObserver(self)
         forceSpeakerOn = 0
         audioSessionInitialized = false
-        result(nil)
     }
 
     // MARK: - Flash / Keep Screen On
@@ -209,6 +213,7 @@ public class FlutterInCallManagerPlugin: NSObject, FlutterPlugin, AVAudioPlayerD
     private func handleSetFlashOn(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         let args = call.arguments as? [String: Any] ?? [:]
         let enable = args["enable"] as? Bool ?? false
+        let brightness = args["brightness"] as? Double ?? 0
 
         guard let device = AVCaptureDevice.default(for: .video),
               device.hasTorch,
@@ -218,7 +223,15 @@ public class FlutterInCallManagerPlugin: NSObject, FlutterPlugin, AVAudioPlayerD
         }
         do {
             try device.lockForConfiguration()
-            device.torchMode = enable ? .on : .off
+            if enable {
+                if brightness > 0, device.isTorchModeSupported(.on) {
+                    try device.setTorchModeOn(level: Float(brightness))
+                } else {
+                    device.torchMode = .on
+                }
+            } else {
+                device.torchMode = .off
+            }
             device.unlockForConfiguration()
         } catch {
             // ignore
@@ -229,11 +242,15 @@ public class FlutterInCallManagerPlugin: NSObject, FlutterPlugin, AVAudioPlayerD
     private func handleSetKeepScreenOn(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         let args = call.arguments as? [String: Any] ?? [:]
         let enable = args["enable"] as? Bool ?? false
+        setKeepScreenOnInternal(enable)
+        result(nil)
+    }
+
+    private func setKeepScreenOnInternal(_ enable: Bool) {
         NSLog("FlutterInCallManager.setKeepScreenOn(): enable: %@", enable ? "YES" : "NO")
         DispatchQueue.main.async {
             UIApplication.shared.isIdleTimerDisabled = enable
         }
-        result(nil)
     }
 
     // MARK: - Speakerphone / Force Speaker / Mute
@@ -955,11 +972,11 @@ public class FlutterInCallManagerPlugin: NSObject, FlutterPlugin, AVAudioPlayerD
         if let busytoneUri = defaultBusytoneUri,
            filename == busytoneUri.deletingPathExtension().lastPathComponent {
             NSLog("FlutterInCallManager.audioPlayerDidFinishPlaying(): busytone finished, invoke stop()")
-            handleStop(FlutterMethodCall(methodName: "stop", arguments: ["busytoneUriType": ""])) { _ in }
+            stopInCallManager()
         } else if let bundleBusytone = bundleBusytoneUri,
                   filename == bundleBusytone.deletingPathExtension().lastPathComponent {
             NSLog("FlutterInCallManager.audioPlayerDidFinishPlaying(): busytone finished, invoke stop()")
-            handleStop(FlutterMethodCall(methodName: "stop", arguments: ["busytoneUriType": ""])) { _ in }
+            stopInCallManager()
         }
     }
 

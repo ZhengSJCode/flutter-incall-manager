@@ -20,6 +20,8 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
 import android.provider.Settings;
 import android.util.Log;
 import android.view.KeyEvent;
@@ -32,17 +34,20 @@ import java.io.File;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 import io.flutter.embedding.engine.plugins.FlutterPlugin;
+import io.flutter.embedding.engine.plugins.activity.ActivityAware;
+import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding;
 import io.flutter.plugin.common.EventChannel;
 import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler;
 import io.flutter.plugin.common.MethodChannel.Result;
 
-public class FlutterInCallManagerPlugin implements FlutterPlugin, MethodCallHandler {
+public class FlutterInCallManagerPlugin implements FlutterPlugin, MethodCallHandler, ActivityAware {
 
     private static final String TAG = "FlutterInCallManager";
     private static final String CHANNEL_NAME = "incall_manager";
@@ -107,9 +112,13 @@ public class FlutterInCallManagerPlugin implements FlutterPlugin, MethodCallHand
     private MediaPlayer ringbackPlayer;
     private MediaPlayer busytonePlayer;
     private Handler ringtoneCountDownHandler;
+    private volatile Looper ringtoneLooper;
 
     private String media = "audio";
     private String packageName;
+
+    // Vibrator
+    private Vibrator vibrator;
 
     // Audio URI cache
     private Map<String, Uri> audioUriMap;
@@ -136,6 +145,7 @@ public class FlutterInCallManagerPlugin implements FlutterPlugin, MethodCallHand
         powerManager = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
         windowManager = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
         sensorManager = (SensorManager) context.getSystemService(Context.SENSOR_SERVICE);
+        vibrator = (Vibrator) context.getSystemService(Context.VIBRATOR_SERVICE);
         if (sensorManager != null) {
             proximitySensor = sensorManager.getDefaultSensor(Sensor.TYPE_PROXIMITY);
         }
@@ -185,16 +195,31 @@ public class FlutterInCallManagerPlugin implements FlutterPlugin, MethodCallHand
         flutterPluginBinding = null;
     }
 
-    // Helper to get current Activity (from FlutterPluginBinding or cached)
+    // Helper to get current Activity.
     private Activity getActivity() {
-        // Flutter plugins don't have direct Activity access in onAttachedToEngine.
-        // The activity should be provided by the host. For now, we try to get it.
-        // In practice, methods that need Activity will receive it via the binding lifecycle.
         return activity;
     }
 
-    public void setActivity(Activity act) {
-        this.activity = act;
+    // ==================== ActivityAware ====================
+
+    @Override
+    public void onAttachedToActivity(@NonNull ActivityPluginBinding binding) {
+        activity = binding.getActivity();
+    }
+
+    @Override
+    public void onDetachedFromActivityForConfigChanges() {
+        activity = null;
+    }
+
+    @Override
+    public void onReattachedToActivity(@NonNull ActivityPluginBinding binding) {
+        activity = binding.getActivity();
+    }
+
+    @Override
+    public void onDetachedFromActivity() {
+        activity = null;
     }
 
     // ==================== MethodCallHandler ====================
@@ -460,16 +485,31 @@ public class FlutterInCallManagerPlugin implements FlutterPlugin, MethodCallHand
         int seconds = call.argument("seconds");
         if (ringtoneUriType == null) ringtoneUriType = "_DEFAULT_";
 
+        List<Integer> vibratePattern = call.argument("vibratePattern");
+        if (vibratePattern != null && vibrator != null && vibrator.hasVibrator()) {
+            long[] pattern = new long[vibratePattern.size()];
+            for (int i = 0; i < vibratePattern.size(); i++) {
+                pattern[i] = vibratePattern.get(i);
+            }
+            if (Build.VERSION.SDK_INT >= 26) {
+                vibrator.vibrate(VibrationEffect.createWaveform(pattern, 0));
+            } else {
+                vibrator.vibrate(pattern, 0);
+            }
+        }
+
         Log.d(TAG, "startRingtone(): UriType=" + ringtoneUriType);
         final String finalType = ringtoneUriType;
         final int finalSeconds = seconds;
 
         new Thread(() -> {
             Looper.prepare();
+            ringtoneLooper = Looper.myLooper();
             try {
                 if (ringtonePlayer != null) {
                     if (ringtonePlayer.isPlaying()) {
                         Log.d(TAG, "startRingtone(): is already playing");
+                        ringtoneLooper.quit();
                         return;
                     }
                     stopRingtoneInternal();
@@ -477,12 +517,14 @@ public class FlutterInCallManagerPlugin implements FlutterPlugin, MethodCallHand
 
                 if (audioManager.getStreamVolume(AudioManager.STREAM_RING) == 0) {
                     Log.d(TAG, "startRingtone(): ringer is silent. leave without play.");
+                    ringtoneLooper.quit();
                     return;
                 }
 
                 Uri ringtoneUri = getRingtoneUri(finalType);
                 if (ringtoneUri == null) {
                     Log.d(TAG, "startRingtone(): no available media");
+                    ringtoneLooper.quit();
                     return;
                 }
 
@@ -515,6 +557,8 @@ public class FlutterInCallManagerPlugin implements FlutterPlugin, MethodCallHand
                 Looper.loop();
             } catch (Exception e) {
                 Log.e(TAG, "startRingtone() failed", e);
+            } finally {
+                ringtoneLooper = null;
             }
         }).start();
         result.success(null);
@@ -526,22 +570,27 @@ public class FlutterInCallManagerPlugin implements FlutterPlugin, MethodCallHand
     }
 
     private void stopRingtoneInternal() {
-        new Thread(() -> {
-            try {
-                if (ringtonePlayer != null) {
-                    ringtonePlayer.stop();
-                    ringtonePlayer.release();
-                    ringtonePlayer = null;
-                    restoreOriginalAudioSetup();
-                }
-                if (ringtoneCountDownHandler != null) {
-                    ringtoneCountDownHandler.removeCallbacksAndMessages(null);
-                    ringtoneCountDownHandler = null;
-                }
-            } catch (Exception e) {
-                Log.d(TAG, "stopRingtone() failed");
+        try {
+            if (ringtonePlayer != null) {
+                ringtonePlayer.stop();
+                ringtonePlayer.release();
+                ringtonePlayer = null;
+                restoreOriginalAudioSetup();
             }
-        }).start();
+            if (ringtoneCountDownHandler != null) {
+                ringtoneCountDownHandler.removeCallbacksAndMessages(null);
+                ringtoneCountDownHandler = null;
+            }
+            if (ringtoneLooper != null) {
+                ringtoneLooper.quit();
+                ringtoneLooper = null;
+            }
+            if (vibrator != null) {
+                vibrator.cancel();
+            }
+        } catch (Exception e) {
+            Log.d(TAG, "stopRingtone() failed");
+        }
     }
 
     // ==================== Ringback ====================

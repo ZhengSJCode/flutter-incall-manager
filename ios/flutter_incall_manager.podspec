@@ -6,7 +6,7 @@ Pod::Spec.new do |s|
 A Flutter plugin that provides in-call management capabilities including audio session management,
 proximity sensor monitoring, speakerphone control, and ringtone/ringback playback.
                        DESC
-  s.homepage         = 'https://github.com/react-native-webrtc/react-native-incall-manager'
+  s.homepage         = 'https://github.com/ZhengSJCode/flutter-incall-manager'
   s.license          = { :type => 'ISC' }
   s.author           = { 'zxcpoiu' => 'zxcpoiu@gmail.com' }
   s.source           = { :path => '.' }
